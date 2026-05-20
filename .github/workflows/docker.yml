@@ -1,0 +1,72 @@
+name: Build and Publish Docker Image
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'        # Ejemplo: v1.0.0
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: ghcr.io/luiscbrenes/docker-duckdns
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Generate metadata
+        id: meta
+        run: |
+          BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          VCS_REF=$(git rev-parse --short HEAD)
+
+          # Si el build fue disparado por un tag v1.2.3 -> VERSION=1.2.3
+          # Si fue por push a main -> VERSION=main-<run_number>
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="main-${GITHUB_RUN_NUMBER}"
+          fi
+
+          echo "BUILD_DATE=${BUILD_DATE}" >> $GITHUB_OUTPUT
+          echo "VCS_REF=${VCS_REF}" >> $GITHUB_OUTPUT
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+
+      - name: Set Docker tags
+        id: tags
+        run: |
+          TAGS="${IMAGE_NAME}:latest"
+
+          # Si es un tag Git, también publicar la versión semántica
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            TAGS="${TAGS},${IMAGE_NAME}:${{ steps.meta.outputs.VERSION }}"
+          fi
+
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.VERSION }}
+            BUILD_DATE=${{ steps.meta.outputs.BUILD_DATE }}
+            VCS_REF=${{ steps.meta.outputs.VCS_REF }}
